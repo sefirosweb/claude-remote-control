@@ -1,0 +1,33 @@
+# Claude Code login watcher — configuration
+#
+# Copy to ~/.config/claude-login-watch/config and chmod 600.
+# It holds a bot token, so it never belongs in the repository.
+
+# --- Telegram -----------------------------------------------------------
+# Token from @BotFather.
+TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
+
+# Your chat with the bot. Send it a message, then read the id from:
+#   curl -s "https://api.telegram.org/bot<TOKEN>/getUpdates" | grep -o '"id":[0-9-]*'
+# Only this chat is listened to, and only this chat is answered.
+TELEGRAM_CHAT_ID="123456789"
+
+# --- The session being watched ------------------------------------------
+# tmux session running Claude Code. `tmux ls` lists them.
+TMUX_SESSION="claude-remote-control-session"
+
+# --- Behaviour ----------------------------------------------------------
+# false: only tell me, I will log in myself.
+# true:  also drive /login and paste back the code I send over Telegram.
+RELOGIN_ENABLED="false"
+
+# How long the script listens for the code before giving up (seconds).
+RELOGIN_WINDOW_SECONDS="300"
+
+# A reply is only pasted into the session when it matches this.
+# Deliberately strict: what gets typed into a terminal should look like a code
+# and nothing else.
+CODE_PATTERN='^[A-Za-z0-9_-]{16,200}(#[A-Za-z0-9_-]{4,100})?$'
+
+# Where locks and the "already warned" marker live.
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-login-watch"

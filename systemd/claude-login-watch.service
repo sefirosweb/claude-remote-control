@@ -1,0 +1,8 @@
+[Unit]
+Description=Check whether the Claude Code session has lost its login
+After=network-online.target
+
+[Service]
+Type=oneshot
+# %h is the user's home: the unit stays the same wherever it is installed.
+ExecStart=%h/.local/share/claude-login-watch/bin/watchdog.sh

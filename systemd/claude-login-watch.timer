@@ -1,0 +1,12 @@
+[Unit]
+Description=Check the Claude Code login every 10 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+# Spreads the check so several machines do not all poll at once.
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
