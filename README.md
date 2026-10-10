@@ -160,6 +160,38 @@ Remote Control sessions or fetch claude.ai connectors"*. Lo cambias por perder
 el Remote Control y los conectores de claude.ai, que suele ser justo lo que
 hacía útil la sesión.
 
+## Si te lo instala un agente
+
+Casi todo esto lo puede hacer un Claude Code con acceso al servidor. Lo que no,
+es porque hace falta un navegador o porque implica una credencial que no debe
+pasar por un chat.
+
+**Lo puede hacer el agente:**
+
+1. `git clone` y `./install.sh --timer`
+2. Averiguar `TMUX_SESSION` con `tmux ls` y escribirlo en la configuración
+3. Leer el `chat_id` con `getUpdates` y guardarlo (después del paso 2 humano)
+4. Añadir el hook `StopFailure` a `~/.claude/settings.json`, **con copia de
+   seguridad previa** y sin tocar los hooks que ya hubiera
+5. Ejecutar las tres pruebas de abajo
+
+**Lo tiene que hacer la persona:**
+
+1. Crear el bot en [@BotFather](https://t.me/BotFather) y escribirle un mensaje
+2. Meter el token en la configuración sin pegarlo en ningún chat:
+
+   ```bash
+   read -s -p "token: " T && sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=\"$T\"|" \
+       ~/.config/claude-login-watch/config && unset T && echo " guardado"
+   ```
+
+3. El día que caduque: abrir el enlace, aprobar y responder el código
+
+**Para el agente, dos reglas:** el token no se imprime ni se pide por chat —
+solo se usa desde el fichero—, y el re-login (`RELOGIN_ENABLED="true"`) se
+enciende cuando la persona lo diga, no por iniciativa propia: mete sus códigos
+de autorización en un canal de terceros.
+
 ## Probarlo sin esperar a que caduque
 
 Las tres pruebas que conviene hacer el día que lo instalas, no el día que falla.
