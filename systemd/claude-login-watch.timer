@@ -2,10 +2,12 @@
 Description=Check the Claude Code login every 10 minutes
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec=10min
+# Wall clock, not "since boot": OnBootSec never fires on a machine that has
+# been up for days, and OnUnitActiveSec needs a previous run to count from.
+OnCalendar=*:0/10
 # Spreads the check so several machines do not all poll at once.
 RandomizedDelaySec=60
+# Runs once after a reboot if the machine was off when it was due.
 Persistent=true
 
 [Install]
