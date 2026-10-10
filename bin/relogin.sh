@@ -38,18 +38,37 @@ log "starting /login"
 send_literal "/login"
 
 # Wait for the authorization URL to appear on the pane.
+#
+# /login does not go straight to the link: it first asks which kind of account
+# this is, with the subscription option already selected. Enter takes it, and
+# only then does the URL show up. Set LOGIN_METHOD_KEYS in the config to pick a
+# different entry, e.g. "Down Enter" for the Console account.
 url=""
-for _ in $(seq 1 20); do
+menu_answered=false
+
+for _ in $(seq 1 30); do
     sleep 1
-    url=$(capture_pane | grep -oE 'https://[^ ]*oauth[^ ]*' | tail -1 || true)
-    [ -n "$url" ] && break
+    pane=$(capture_pane)
+
+    url=$(extract_oauth_url)
+    if [ -n "$url" ] && url_looks_complete "$url"; then
+        break
+    fi
+    url=""
+
+    if [ "$menu_answered" = false ] && printf '%s' "$pane" | grep -q 'Select login method'; then
+        # shellcheck disable=SC2086 # the keys are meant to split into arguments
+        tmux send-keys -t "$TMUX_SESSION" ${LOGIN_METHOD_KEYS:-Enter}
+        menu_answered=true
+        log "login method menu answered"
+    fi
 done
 
 if [ -z "$url" ]; then
-    notify "⚠️ Ran /login but no authorization link appeared. Sign in by hand:
+    notify "⚠️ Ran /login but could not read a complete authorization link off the session. Sign in by hand:
 
   tmux attach -t $TMUX_SESSION"
-    log "no url on pane"
+    log "no complete url on pane"
     exit 1
 fi
 
