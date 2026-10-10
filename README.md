@@ -107,6 +107,25 @@ tienes otros hooks, añade solo la entrada `StopFailure`:
 }
 ```
 
+## Opciones
+
+Todas van en `~/.config/claude-login-watch/config`.
+
+| Opción | Para qué | Por defecto |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | El bot que te escribe | — |
+| `TELEGRAM_CHAT_ID` | Tu chat. Es el único que se lee y el único al que se contesta | — |
+| `TMUX_SESSION` | La sesión a vigilar, de `tmux ls` | `claude` |
+| `RELOGIN_ENABLED` | `true` para poder entrar desde el chat | `false` |
+| `RELOGIN_WINDOW_SECONDS` | Cuánto espera tu código antes de rendirse | `300` |
+| `LOGIN_METHOD_KEYS` | Qué cuenta elegir en el menú de `/login` | `Enter` |
+| `CODE_PATTERN` | Qué se acepta como código | alfanumérico, 16+ |
+| `STATE_DIR` | Dónde van el log y los marcadores | `~/.local/state/…` |
+
+`LOGIN_METHOD_KEYS` importa si no usas una cuenta de suscripción: `/login`
+pregunta primero qué tipo de cuenta es, con la primera opción marcada. Para la
+cuenta de Console pon `"Down Enter"`.
+
 ## El re-login desde Telegram
 
 Está **apagado por defecto**. Para encenderlo, `RELOGIN_ENABLED="true"`.
@@ -114,6 +133,10 @@ Está **apagado por defecto**. Para encenderlo, `RELOGIN_ENABLED="true"`.
 Con él encendido, cuando caduca el login recibes el enlace, lo abres, apruebas
 el acceso y respondes al bot con el código. El script lo escribe en la sesión y
 te dice si entró.
+
+El enlace se comprueba antes de salir: si no lleva `state` y `code_challenge`
+no se envía, porque el TUI lo pinta en varias líneas y un enlace a medias te
+manda al navegador para que descubras allí que no sirve.
 
 Decide tú si te compensa, porque tiene coste:
 
@@ -136,6 +159,74 @@ No vale aquí: ese token *"can only make model requests, so it can't establish
 Remote Control sessions or fetch claude.ai connectors"*. Lo cambias por perder
 el Remote Control y los conectores de claude.ai, que suele ser justo lo que
 hacía útil la sesión.
+
+## Si te lo instala un agente
+
+Casi todo esto lo puede hacer un Claude Code con acceso al servidor. Lo que no,
+es porque hace falta un navegador o porque implica una credencial que no debe
+pasar por un chat.
+
+**Lo puede hacer el agente:**
+
+1. `git clone` y `./install.sh --timer`
+2. Averiguar `TMUX_SESSION` con `tmux ls` y escribirlo en la configuración
+3. Leer el `chat_id` con `getUpdates` y guardarlo (después del paso 2 humano)
+4. Añadir el hook `StopFailure` a `~/.claude/settings.json`, **con copia de
+   seguridad previa** y sin tocar los hooks que ya hubiera
+5. Ejecutar las tres pruebas de abajo
+
+**Lo tiene que hacer la persona:**
+
+1. Crear el bot en [@BotFather](https://t.me/BotFather) y escribirle un mensaje
+2. Meter el token en la configuración sin pegarlo en ningún chat:
+
+   ```bash
+   read -s -p "token: " T && sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=\"$T\"|" \
+       ~/.config/claude-login-watch/config && unset T && echo " guardado"
+   ```
+
+3. El día que caduque: abrir el enlace, aprobar y responder el código
+
+**Para el agente, dos reglas:** el token no se imprime ni se pide por chat —
+solo se usa desde el fichero—, y el re-login (`RELOGIN_ENABLED="true"`) se
+enciende cuando la persona lo diga, no por iniciativa propia: mete sus códigos
+de autorización en un canal de terceros.
+
+## Probarlo sin esperar a que caduque
+
+Las tres pruebas que conviene hacer el día que lo instalas, no el día que falla.
+
+**1. El canal.**
+
+```bash
+~/.local/share/claude-login-watch/bin/watchdog.sh --test
+```
+
+**2. El vigilante**, con una sesión que finge estar caducada:
+
+```bash
+tmux new-session -d -s prueba-expirada "printf 'Login expired · Please run /login\n'; sleep 300"
+sed 's|^TMUX_SESSION=.*|TMUX_SESSION="prueba-expirada"|' \
+    ~/.config/claude-login-watch/config > /tmp/config-prueba
+chmod 600 /tmp/config-prueba
+CLAUDE_LOGIN_WATCH_CONFIG=/tmp/config-prueba \
+    ~/.local/share/claude-login-watch/bin/watchdog.sh
+tmux kill-session -t prueba-expirada
+```
+
+**3. El hook**, provocando un fallo de autenticación de verdad en un proceso
+aparte. Tu sesión no se entera, porque la variable solo existe para ese proceso:
+
+```bash
+ANTHROPIC_API_KEY="sk-ant-no-vale" claude -p "di hola"
+rm -f ~/.local/state/claude-login-watch/warned   # importante
+```
+
+Ese `rm` no es opcional: el marcador que evita avisos repetidos silenciaría un
+aviso de verdad durante seis horas.
+
+Para probar el re-login entero sin tocar tu sesión, arranca otro Claude en una
+sesión aparte y apunta ahí un `TMUX_SESSION` de prueba, como en el punto 2.
 
 ## Lo más eficaz es no llegar a caducar
 
