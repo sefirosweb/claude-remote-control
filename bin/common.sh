@@ -60,16 +60,50 @@ session_exists() {
     tmux has-session -t "$TMUX_SESSION" 2>/dev/null
 }
 
-# What the session currently shows. -p prints, -S -200 includes some scrollback,
-# because the interesting line may have scrolled off.
+# What the session currently shows. -p prints, -S -200 includes some scrollback
+# because the interesting line may have scrolled off, and -J rejoins lines the
+# terminal wrapped — without it a long URL arrives cut in half.
 capture_pane() {
-    tmux capture-pane -p -S -200 -t "$TMUX_SESSION" 2>/dev/null || true
+    tmux capture-pane -p -J -S -200 -t "$TMUX_SESSION" 2>/dev/null || true
 }
 
 # Types text literally (-l), so nothing in it is read as a tmux key name.
 send_literal() {
     tmux send-keys -t "$TMUX_SESSION" -l -- "$1"
     tmux send-keys -t "$TMUX_SESSION" Enter
+}
+
+# Pulls the authorization link off the pane.
+#
+# The link does not arrive on one line: the TUI prints it across several, and
+# tmux only rejoins what it wrapped itself. Grepping gets you the first chunk
+# and a URL that fails with "missing state parameter". So: start at the scheme,
+# keep taking lines while they still look like a continuation (no spaces), and
+# stop at the first blank or prose line.
+extract_oauth_url() {
+    capture_pane | awk '
+        !collecting && /https:\/\/[^ ]*oauth/ {
+            line = $0
+            sub(/.*https:\/\//, "https://", line)
+            gsub(/[ \t]+$/, "", line)
+            url = line
+            collecting = 1
+            next
+        }
+        collecting {
+            line = $0
+            gsub(/^[ \t]+|[ \t]+$/, "", line)
+            if (line == "" || line ~ /[ \t]/) exit
+            url = url line
+        }
+        END { print url }
+    '
+}
+
+# An authorization link without these is a link that will not work. Better to
+# say so than to send it and have the browser refuse it.
+url_looks_complete() {
+    printf '%s' "$1" | grep -q 'state=' && printf '%s' "$1" | grep -q 'code_challenge='
 }
 
 # The strings Claude Code shows when the credential is gone. Kept in one place
