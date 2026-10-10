@@ -30,7 +30,7 @@ fi
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 # Ignore anything said before now: an old message must not be replayed as a code.
-baseline=$(curl -sS --max-time 20 "$(api_url getUpdates)?offset=-1" |
+baseline=$(tg_api getUpdates --get --data "offset=-1" |
     grep -o '"update_id":[0-9]*' | tail -1 | grep -o '[0-9]*' || true)
 offset=$(( ${baseline:-0} + 1 ))
 
@@ -64,9 +64,12 @@ deadline=$(( $(date +%s) + RELOGIN_WINDOW_SECONDS ))
 code=""
 
 while [ "$(date +%s)" -lt "$deadline" ]; do
-    # Long polling: Telegram holds the request open until something arrives.
-    response=$(curl -sS --max-time 40 \
-        "$(api_url getUpdates)?offset=${offset}&timeout=25&allowed_updates=%5B%22message%22%5D" || true)
+    # Long polling: Telegram holds the request open until something arrives,
+    # so curl waits longer than the usual call.
+    response=$(CURL_TIMEOUT=40 tg_api getUpdates --get \
+        --data "offset=${offset}" \
+        --data "timeout=25" \
+        --data-urlencode 'allowed_updates=["message"]' || true)
 
     [ -z "$response" ] && continue
 

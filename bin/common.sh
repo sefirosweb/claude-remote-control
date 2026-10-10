@@ -32,18 +32,28 @@ log() {
     printf '%s %s\n' "$(date -Is)" "$*" >>"$LOG_FILE"
 }
 
-api_url() {
-    printf 'https://api.telegram.org/bot%s/%s' "$TELEGRAM_BOT_TOKEN" "$1"
+# Calls the Telegram API.
+#
+# The URL carries the bot token, and an argument to curl is readable by anyone
+# who can list processes — `ps` shows it, and on a shared machine that is
+# everyone. So the URL goes in through stdin as a curl config file instead,
+# and the command line stays clean.
+#
+#   tg_api <method> [extra curl args...]
+tg_api() {
+    local method="$1"
+    shift
+    printf 'url = "https://api.telegram.org/bot%s/%s"\n' "$TELEGRAM_BOT_TOKEN" "$method" |
+        curl -sS --max-time "${CURL_TIMEOUT:-20}" --config - "$@"
 }
 
 # Sends a message. The text is passed as a form field, so it needs no escaping.
 notify() {
     local text="$1"
-    curl -sS --max-time 20 \
+    tg_api sendMessage \
         --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
         --data-urlencode "text=${text}" \
-        --data-urlencode "disable_web_page_preview=true" \
-        "$(api_url sendMessage)" >/dev/null || log "notify failed"
+        --data-urlencode "disable_web_page_preview=true" >/dev/null || log "notify failed"
 }
 
 session_exists() {

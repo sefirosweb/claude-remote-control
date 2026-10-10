@@ -162,6 +162,12 @@ config.example          la configuración, comentada
 El log vive en `~/.local/state/claude-login-watch/watch.log`. No guarda ni el
 token, ni el `chat_id`, ni el código.
 
+El token está en el fichero de configuración, con permisos 600, y no sale de
+ahí: no se escribe en el log y no se pasa a `curl` como argumento, porque los
+argumentos de un proceso los puede leer cualquiera que haga `ps`. Va por stdin
+como fichero de configuración de `curl`. Lo que esto **no** hace es protegerte
+de alguien que ya tenga tu usuario: quien pueda leer el fichero, lo tiene.
+
 ## Resolución de problemas
 
 | Síntoma | Qué mirar |
