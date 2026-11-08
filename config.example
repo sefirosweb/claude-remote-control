@@ -24,15 +24,17 @@ RELOGIN_ENABLED="false"
 # How long the script listens for the code before giving up (seconds).
 RELOGIN_WINDOW_SECONDS="300"
 
-# /login asks which kind of account before showing the link:
-#
-#   1. Claude account with subscription   <- preselected
-#   2. Anthropic Console account
-#   3. 3rd-party platform
-#
-# Enter takes the first one. For the Console account use "Down Enter", and for
-# the third "Down Down Enter". tmux key names, separated by spaces.
-LOGIN_METHOD_KEYS="Enter"
+# Re-login runs `claude auth login` in its own tmux session (the watched one
+# runs `claude remote-control`, which ignores a typed /login). Flags pick the
+# account kind: --claudeai (subscription), --console or --sso.
+LOGIN_FLAGS="--claudeai"
+
+# systemd user unit restarted after a successful login, so remote-control
+# picks up the new credential.
+REMOTE_SERVICE="claude-remote.service"
+
+# Path to the claude binary. Empty: found on PATH or in ~/.local/bin.
+# CLAUDE_BIN="$HOME/.local/bin/claude"
 
 # A reply is only pasted into the session when it matches this.
 # Deliberately strict: what gets typed into a terminal should look like a code

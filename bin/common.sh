@@ -20,6 +20,12 @@ fi
 : "${RELOGIN_WINDOW_SECONDS:=300}"
 : "${CODE_PATTERN:=^[A-Za-z0-9_-]{16,200}(#[A-Za-z0-9_-]{4,100})?$}"
 : "${STATE_DIR:=${XDG_STATE_HOME:-$HOME/.local/state}/claude-login-watch}"
+# systemd user units do not have ~/.local/bin on PATH, so name the binary.
+: "${CLAUDE_BIN:=$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
+: "${REMOTE_SERVICE:=claude-remote.service}"
+# Where `claude auth login` runs. Never the watched session: that one runs
+# `claude remote-control`, which is not a REPL and ignores a typed /login.
+LOGIN_SESSION="${TMUX_SESSION}-login"
 
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR" 2>/dev/null || true
@@ -57,20 +63,22 @@ notify() {
 }
 
 session_exists() {
-    tmux has-session -t "$TMUX_SESSION" 2>/dev/null
+    tmux has-session -t "${1:-$TMUX_SESSION}" 2>/dev/null
 }
 
 # What the session currently shows. -p prints, -S -200 includes some scrollback
 # because the interesting line may have scrolled off, and -J rejoins lines the
 # terminal wrapped — without it a long URL arrives cut in half.
 capture_pane() {
-    tmux capture-pane -p -J -S -200 -t "$TMUX_SESSION" 2>/dev/null || true
+    tmux capture-pane -p -J -S -200 -t "${1:-$TMUX_SESSION}" 2>/dev/null || true
 }
 
 # Types text literally (-l), so nothing in it is read as a tmux key name.
+#   send_literal <text> [session]
 send_literal() {
-    tmux send-keys -t "$TMUX_SESSION" -l -- "$1"
-    tmux send-keys -t "$TMUX_SESSION" Enter
+    local target="${2:-$TMUX_SESSION}"
+    tmux send-keys -t "$target" -l -- "$1"
+    tmux send-keys -t "$target" Enter
 }
 
 # Pulls the authorization link off the pane.
@@ -81,7 +89,7 @@ send_literal() {
 # keep taking lines while they still look like a continuation (no spaces), and
 # stop at the first blank or prose line.
 extract_oauth_url() {
-    capture_pane | awk '
+    capture_pane "${1:-$TMUX_SESSION}" | awk '
         !collecting && /https:\/\/[^ ]*oauth/ {
             line = $0
             sub(/.*https:\/\//, "https://", line)
@@ -108,4 +116,14 @@ url_looks_complete() {
 
 # The strings Claude Code shows when the credential is gone. Kept in one place
 # because they are the one thing likely to change upstream.
-EXPIRED_PATTERN='Login expired|Please run /login|Anthropic profile login expired|authentication_failed'
+EXPIRED_PATTERN='Login expired|Please run /login|Please use `/login`|Anthropic profile login expired|authentication_failed'
+
+# The pane can lie in both directions: an old error stays in the scrollback, and
+# `remote-control` keeps saying "Connected" with no credential behind it. This
+# asks the CLI itself.
+is_logged_in() {
+    # Captured first: piping into grep -q under pipefail can fail on SIGPIPE.
+    local status
+    status=$("$CLAUDE_BIN" auth status 2>/dev/null || true)
+    printf '%s' "$status" | grep -qE '"loggedIn":[[:space:]]*true'
+}

@@ -22,14 +22,15 @@ can't recover until you sign in again"*.
 flowchart TD
     A[Claude Code en tmux] -->|turno falla por auth| B[hook StopFailure]
     T[timer cada 10 min] -->|sesión parada, nadie pregunta| C[watchdog.sh]
-    C -->|ve 'Login expired' en el panel| B
+    C -->|auth status sin login, o 'Login expired' en el panel| B
     B --> D[on-auth-failure.sh]
     D -->|RELOGIN_ENABLED=false| E[Telegram: avísame y entro yo]
     D -->|RELOGIN_ENABLED=true| F[relogin.sh]
-    F -->|escribe /login| A
-    F -->|lee el enlace del panel| G[Telegram: enlace]
+    F -->|lanza claude auth login en otra sesión tmux| L[sesión -login]
+    F -->|lee el enlace de esa sesión| G[Telegram: enlace]
     G -.->|tú autorizas y respondes el código| F
-    F -->|escribe el código| A
+    F -->|escribe el código| L
+    F -->|auth status OK: reinicia el servicio| A
     F --> H[Telegram: entró / no entró]
 ```
 
@@ -118,21 +119,25 @@ Todas van en `~/.config/claude-login-watch/config`.
 | `TMUX_SESSION` | La sesión a vigilar, de `tmux ls` | `claude` |
 | `RELOGIN_ENABLED` | `true` para poder entrar desde el chat | `false` |
 | `RELOGIN_WINDOW_SECONDS` | Cuánto espera tu código antes de rendirse | `300` |
-| `LOGIN_METHOD_KEYS` | Qué cuenta elegir en el menú de `/login` | `Enter` |
+| `LOGIN_FLAGS` | Tipo de cuenta para `claude auth login` (`--claudeai`, `--console`, `--sso`) | `--claudeai` |
+| `REMOTE_SERVICE` | Unidad systemd de usuario que se reinicia tras entrar | `claude-remote.service` |
+| `CLAUDE_BIN` | Ruta al binario `claude` | el del `PATH` o `~/.local/bin/claude` |
 | `CODE_PATTERN` | Qué se acepta como código | alfanumérico, 16+ |
 | `STATE_DIR` | Dónde van el log y los marcadores | `~/.local/state/…` |
 
-`LOGIN_METHOD_KEYS` importa si no usas una cuenta de suscripción: `/login`
-pregunta primero qué tipo de cuenta es, con la primera opción marcada. Para la
-cuenta de Console pon `"Down Enter"`.
+El re-login **no** escribe `/login` en la sesión vigilada: si esa sesión corre
+`claude remote-control` no hay ningún prompt donde escribirlo y el enlace nunca
+aparece. Por eso lanza `claude auth login` en una sesión tmux aparte
+(`<TMUX_SESSION>-login`), comprueba con `claude auth status` que entró y
+reinicia `REMOTE_SERVICE` para que remote-control coja la credencial nueva.
 
 ## El re-login desde Telegram
 
 Está **apagado por defecto**. Para encenderlo, `RELOGIN_ENABLED="true"`.
 
 Con él encendido, cuando caduca el login recibes el enlace, lo abres, apruebas
-el acceso y respondes al bot con el código. El script lo escribe en la sesión y
-te dice si entró.
+el acceso y respondes al bot con el código. El script lo escribe en la sesión de
+login, comprueba `claude auth status`, reinicia el servicio y te dice si entró.
 
 El enlace se comprueba antes de salir: si no lleva `state` y `code_challenge`
 no se envía, porque el TUI lo pinta en varias líneas y un enlace a medias te
@@ -144,7 +149,7 @@ Decide tú si te compensa, porque tiene coste:
   solo uso y dura poco, pero es una credencial.
 - **Durante esa ventana, lo que escribas en el chat acaba en tu terminal.** Se
   acota bastante: solo se escucha el `chat_id` configurado, solo cuentan los
-  mensajes posteriores a lanzar el `/login`, solo se acepta texto que case con
+  mensajes posteriores a lanzar el login, solo se acepta texto que case con
   `CODE_PATTERN`, la ventana dura cinco minutos y el texto se escribe con
   `tmux send-keys -l`, que lo manda literal y no interpreta nombres de teclas.
   Aun así, es una ventana.
