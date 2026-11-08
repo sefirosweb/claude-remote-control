@@ -22,6 +22,12 @@ if [ "${1:-}" = "--test" ]; then
         echo "tmux:        NOT FOUND — check TMUX_SESSION against 'tmux ls'"
     fi
     echo "Re-login:    $RELOGIN_ENABLED"
+    echo "Claude:      $CLAUDE_BIN"
+    if is_logged_in; then
+        echo "Auth:        logged in"
+    else
+        echo "Auth:        LOGGED OUT"
+    fi
     echo "State:       $STATE_DIR"
     echo
     echo "Last lines of the pane:"
@@ -35,6 +41,11 @@ fi
 if ! session_exists; then
     log "session '$TMUX_SESSION' not running"
     exit 0
+fi
+
+if ! is_logged_in; then
+    log "watchdog: auth status says logged out"
+    exec "$HERE/on-auth-failure.sh"
 fi
 
 if capture_pane | grep -qE "$EXPIRED_PATTERN"; then
