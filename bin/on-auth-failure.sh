@@ -2,14 +2,19 @@
 # Entry point for Claude Code's StopFailure hook (matcher: authentication_failed)
 # and for the watchdog timer.
 #
-# It warns once per incident and, when RELOGIN_ENABLED is true, hands over to
-# relogin.sh. The hook may fire on every failed turn, so the marker file is what
-# keeps a dead session from sending a message a minute.
+# It warns once per incident and decides who deals with it: the Telegram bot
+# when it is running (you answer with /login or /restart), relogin.sh when
+# RELOGIN_ENABLED is true, or you, by hand. The hook may fire on every failed
+# turn, so the marker file is what keeps a dead session from sending a message
+# a minute.
+#
+#   on-auth-failure.sh [auth|down]     the hook passes nothing, which is auth
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 . "$HERE/common.sh"
 
+reason="${1:-auth}"
 MARKER="$STATE_DIR/warned"
 
 # A second warning is only worth sending after this long without the session
@@ -27,17 +32,46 @@ if [ -f "$MARKER" ]; then
 fi
 
 printf '%s' "$now" >"$MARKER"
-log "auth failure detected"
+log "incident: $reason"
 
 host="$(hostname)"
 
-if [ "$RELOGIN_ENABLED" = "true" ]; then
-    notify "🔑 Claude Code ($host) has lost its login. Starting /login — the authorization link follows."
+# The bot owns the Telegram updates while it runs, so relogin.sh cannot poll
+# alongside it. It also makes the automatic login unnecessary: you ask for
+# the link when you are at the phone, not at three in the morning.
+if bot_running; then
+    case "$reason" in
+        down)
+            notify "🔴 Claude Code ($host): Remote Control is not running — $REMOTE_SERVICE is $(service_summary).
+
+Send /logs to see why, /restart to start it again, or /login if it is the login."
+            ;;
+        *)
+            notify "🔑 Claude Code ($host) has lost its login.
+
+Send /login and I will give you the link."
+            ;;
+    esac
+    exit 0
+fi
+
+if [ "$reason" = auth ] && [ "$RELOGIN_ENABLED" = "true" ]; then
+    notify "🔑 Claude Code ($host) has lost its login. Starting the login — the authorization link follows."
     exec "$HERE/relogin.sh"
 fi
 
-notify "🔑 Claude Code ($host) has lost its login.
+case "$reason" in
+    down)
+        notify "🔴 Claude Code ($host): Remote Control is not running — $REMOTE_SERVICE is $(service_summary).
 
-The session is stopped until someone signs in: open the tmux session and run /login.
+  journalctl --user -u $REMOTE_SERVICE -n 50
+  systemctl --user restart $REMOTE_SERVICE"
+        ;;
+    *)
+        notify "🔑 Claude Code ($host) has lost its login.
 
-  tmux attach -t $TMUX_SESSION"
+The session is stopped until someone signs in:
+
+  claude auth login && systemctl --user restart $REMOTE_SERVICE"
+        ;;
+esac

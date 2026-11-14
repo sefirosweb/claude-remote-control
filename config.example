@@ -18,19 +18,29 @@ TMUX_SESSION="claude-remote-control-session"
 
 # --- Behaviour ----------------------------------------------------------
 # false: only tell me, I will log in myself.
-# true:  also drive /login and paste back the code I send over Telegram.
+# true:  also drive the login and paste back the code I send over Telegram.
+#        Ignored while the bot (./install.sh --bot) is running: with the bot
+#        you ask for the link yourself, with /login, when you are at the phone.
 RELOGIN_ENABLED="false"
 
-# How long the script listens for the code before giving up (seconds).
+# How long the link waits for your code before giving up (seconds). The same
+# for relogin.sh and for the bot's /login.
 RELOGIN_WINDOW_SECONDS="300"
+
+# Bad checks in a row (10 minutes apart) before the watchdog warns. The
+# access token expires every few hours and `claude auth status` says
+# "logged out" until remote-control has refreshed it; one bad reading is
+# not an incident.
+FAIL_THRESHOLD="2"
 
 # Re-login runs `claude auth login` in its own tmux session (the watched one
 # runs `claude remote-control`, which ignores a typed /login). Flags pick the
 # account kind: --claudeai (subscription), --console or --sso.
 LOGIN_FLAGS="--claudeai"
 
-# systemd user unit restarted after a successful login, so remote-control
-# picks up the new credential.
+# systemd user unit that runs remote-control. Restarted after a login or an
+# update so the session picks up the new credential or version, and watched
+# for restart loops.
 REMOTE_SERVICE="claude-remote.service"
 
 # Path to the claude binary. Empty: found on PATH or in ~/.local/bin.
