@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Shared helpers. Sourced by the other scripts, never run on its own.
+# bot.py sources it too (through bash), so the configuration, its defaults and
+# every tmux, systemd and claude call live here once.
 
 set -euo pipefail
 
@@ -23,6 +25,9 @@ fi
 # systemd user units do not have ~/.local/bin on PATH, so name the binary.
 : "${CLAUDE_BIN:=$(command -v claude 2>/dev/null || echo "$HOME/.local/bin/claude")}"
 : "${REMOTE_SERVICE:=claude-remote.service}"
+: "${LOGIN_FLAGS:=--claudeai}"
+# Bad checks in a row before the watchdog raises the alarm.
+: "${FAIL_THRESHOLD:=2}"
 # Where `claude auth login` runs. Never the watched session: that one runs
 # `claude remote-control`, which is not a REPL and ignores a typed /login.
 LOGIN_SESSION="${TMUX_SESSION}-login"
@@ -31,6 +36,9 @@ mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR" 2>/dev/null || true
 
 LOG_FILE="$STATE_DIR/watch.log"
+# Written by bot.py while it runs. The scripts read it to know whether an
+# incident goes to the bot (you answer with /login) or is handled here.
+BOT_PID_FILE="$STATE_DIR/bot.pid"
 
 # Never log the token, the chat id or the code: this file is plain text and
 # ends up in bug reports.
@@ -61,6 +69,15 @@ notify() {
         --data-urlencode "text=${text}" \
         --data-urlencode "disable_web_page_preview=true" >/dev/null || log "notify failed"
 }
+
+bot_running() {
+    local pid
+    pid=$(cat "$BOT_PID_FILE" 2>/dev/null) || return 1
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# --- The watched session ------------------------------------------------
+# Every helper takes an optional session name and defaults to TMUX_SESSION.
 
 session_exists() {
     tmux has-session -t "${1:-$TMUX_SESSION}" 2>/dev/null
@@ -118,12 +135,102 @@ url_looks_complete() {
 # because they are the one thing likely to change upstream.
 EXPIRED_PATTERN='Login expired|Please run /login|Please use `/login`|Anthropic profile login expired|authentication_failed'
 
-# The pane can lie in both directions: an old error stays in the scrollback, and
-# `remote-control` keeps saying "Connected" with no credential behind it. This
-# asks the CLI itself.
+# What `claude auth login` prints once the pasted code is accepted or refused.
+LOGIN_OK_PATTERN='Login successful'
+LOGIN_FAIL_PATTERN='Invalid code|OAuth error|Authentication failed'
+
+# The pane can lie in both directions: an old error stays in the scrollback,
+# and `remote-control` keeps saying "Connected" with no credential behind it.
+# This asks the CLI itself.
 is_logged_in() {
     # Captured first: piping into grep -q under pipefail can fail on SIGPIPE.
     local status
     status=$("$CLAUDE_BIN" auth status 2>/dev/null || true)
     printf '%s' "$status" | grep -qE '"loggedIn":[[:space:]]*true'
+}
+
+# --- The login session --------------------------------------------------
+# relogin.sh and bot.py drive the same four steps, so they live here.
+
+# Starts `claude auth login` in LOGIN_SESSION, replacing a previous one. The
+# window is wide so the link is not wrapped, and the sleep keeps the pane
+# around after the command ends, long enough to read what it said.
+start_login_session() {
+    end_login_session
+    tmux new-session -d -s "$LOGIN_SESSION" -x 400 -y 50 \
+        "\"$CLAUDE_BIN\" auth login $LOGIN_FLAGS; sleep 30"
+}
+
+end_login_session() {
+    tmux kill-session -t "$LOGIN_SESSION" 2>/dev/null || true
+}
+
+# Prints the authorization link once it is on the pane. Gives up after 30
+# seconds, printing nothing and returning non-zero.
+wait_for_oauth_url() {
+    local url
+    for _ in $(seq 1 30); do
+        sleep 1
+        url=$(extract_oauth_url "$LOGIN_SESSION")
+        if [ -n "$url" ] && url_looks_complete "$url"; then
+            printf '%s\n' "$url"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Waits for `claude auth login` to say whether the pasted code was taken.
+# Prints "ok" or "failed", or "unclear" when it said neither in 20 seconds
+# and the credential is not there either.
+login_outcome() {
+    local pane
+    for _ in $(seq 1 20); do
+        sleep 1
+        pane=$(capture_pane "$LOGIN_SESSION")
+        if printf '%s' "$pane" | grep -qE "$LOGIN_OK_PATTERN"; then
+            echo ok
+            return 0
+        fi
+        if printf '%s' "$pane" | grep -qE "$LOGIN_FAIL_PATTERN"; then
+            echo failed
+            return 0
+        fi
+    done
+    if is_logged_in; then echo ok; else echo unclear; fi
+}
+
+# --- The service --------------------------------------------------------
+
+restart_remote_service() {
+    systemctl --user restart "$REMOTE_SERVICE"
+}
+
+# How many times systemd has restarted the service on its own since it was
+# last started by hand. Growing between checks means it keeps dying.
+service_restarts() {
+    local restarts
+    restarts=$(systemctl --user show -p NRestarts --value "$REMOTE_SERVICE" 2>/dev/null || true)
+    printf '%s\n' "${restarts:-0}"
+}
+
+# One line about REMOTE_SERVICE, e.g. "active (running), 3 restarts".
+service_summary() {
+    local state sub
+    state=$(systemctl --user show -p ActiveState --value "$REMOTE_SERVICE" 2>/dev/null || true)
+    sub=$(systemctl --user show -p SubState --value "$REMOTE_SERVICE" 2>/dev/null || true)
+    printf '%s (%s), %s restarts\n' "${state:-unknown}" "${sub:-unknown}" "$(service_restarts)"
+}
+
+# --- Versions -----------------------------------------------------------
+
+installed_version() {
+    "$CLAUDE_BIN" --version 2>/dev/null | awk '{print $1}'
+}
+
+# The newest release on npm, which is what `claude update` installs. Prints
+# nothing when the registry cannot be reached.
+latest_version() {
+    curl -sS --max-time 10 https://registry.npmjs.org/@anthropic-ai/claude-code/latest 2>/dev/null |
+        python3 -c 'import json, sys; print(json.load(sys.stdin).get("version", ""))' 2>/dev/null || true
 }

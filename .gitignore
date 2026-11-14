@@ -1,3 +1,4 @@
 # The real config holds a bot token. Only the example belongs here.
 config
 *.log
+__pycache__/

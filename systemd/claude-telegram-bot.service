@@ -1,0 +1,13 @@
+[Unit]
+Description=Telegram command bot for the Claude Code login watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# %h is the user's home: the unit stays the same wherever it is installed.
+ExecStart=%h/.local/share/claude-login-watch/bin/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

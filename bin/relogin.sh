@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Drives the login from Telegram.
+# Drives the login from Telegram without the bot.
 #
 #   1. starts `claude auth login` in its own tmux session (LOGIN_SESSION)
 #   2. reads the authorization URL off that pane and sends it to you
 #   3. waits for your reply, for RELOGIN_WINDOW_SECONDS and no longer
-#   4. types the code into it, checks `claude auth status`, and restarts
+#   4. types the code into it, checks the outcome, and restarts
 #      REMOTE_SERVICE so remote-control picks up the new credential
 #
 # Typing /login into the watched session does not work: it runs
@@ -13,12 +13,20 @@
 # Only the configured chat is read, only replies newer than step 1 count, and
 # only text matching CODE_PATTERN is ever typed. Nothing listens on a port:
 # this asks Telegram, Telegram does not reach in.
+#
+# When bot.py is running it does all this on /login and this script steps
+# aside: two readers of the same bot's updates would fight over them.
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 . "$HERE/common.sh"
 
 LOCK="$STATE_DIR/relogin.lock"
+
+if bot_running; then
+    log "bot is running and owns the Telegram updates; send /login to it"
+    exit 0
+fi
 
 if ! session_exists; then
     notify "⚠️ Cannot re-login: tmux session '$TMUX_SESSION' is not running."
@@ -31,7 +39,7 @@ if ! mkdir "$LOCK" 2>/dev/null; then
     log "another re-login is in progress"
     exit 0
 fi
-trap 'tmux kill-session -t "$LOGIN_SESSION" 2>/dev/null || true; rmdir "$LOCK" 2>/dev/null || true' EXIT
+trap 'end_login_session; rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 # Ignore anything said before now: an old message must not be replayed as a code.
 baseline=$(tg_api getUpdates --get --data "offset=-1" |
@@ -39,23 +47,9 @@ baseline=$(tg_api getUpdates --get --data "offset=-1" |
 offset=$(( ${baseline:-0} + 1 ))
 
 log "starting claude auth login in $LOGIN_SESSION"
-tmux kill-session -t "$LOGIN_SESSION" 2>/dev/null || true
-# Wide window so the URL is not wrapped; LOGIN_FLAGS picks the account kind
-# (--claudeai, --console, --sso).
-tmux new-session -d -s "$LOGIN_SESSION" -x 400 -y 50 \
-    "\"$CLAUDE_BIN\" auth login ${LOGIN_FLAGS:---claudeai}; sleep 30"
+start_login_session
 
-url=""
-for _ in $(seq 1 30); do
-    sleep 1
-    url=$(extract_oauth_url "$LOGIN_SESSION")
-    if [ -n "$url" ] && url_looks_complete "$url"; then
-        break
-    fi
-    url=""
-done
-
-if [ -z "$url" ]; then
+if ! url=$(wait_for_oauth_url); then
     notify "⚠️ Ran 'claude auth login' but could not read a complete authorization link. Sign in by hand:
 
   claude auth login && systemctl --user restart $REMOTE_SERVICE"
@@ -124,25 +118,20 @@ fi
 
 log "code received, pasting"
 send_literal "$code" "$LOGIN_SESSION"
+outcome=$(login_outcome)
 
-# `auth login` exchanges the code and writes the credential; give it a moment.
-for _ in $(seq 1 20); do
-    sleep 1
-    is_logged_in && break
-done
-
-if ! is_logged_in; then
-    notify "❌ The code did not take — 'claude auth status' still says logged out. Sign in by hand:
+if [ "$outcome" != ok ]; then
+    notify "❌ The code did not take ($outcome). Sign in by hand:
 
   claude auth login && systemctl --user restart $REMOTE_SERVICE"
-    log "login still failing after code"
+    log "login $outcome after the code"
     exit 1
 fi
 
 log "login ok, restarting $REMOTE_SERVICE"
-rm -f "$STATE_DIR/warned"
+rm -f "$STATE_DIR/warned" "$STATE_DIR/failures"
 
-if systemctl --user restart "$REMOTE_SERVICE"; then
+if restart_remote_service; then
     notify "✅ Signed in again and $REMOTE_SERVICE restarted. Remote Control is back."
     log "service restarted"
     exit 0
